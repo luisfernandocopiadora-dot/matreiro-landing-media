@@ -120,26 +120,41 @@ async function createOrGetChat(contactId) {
 }
 
 async function attachTag(chatId) {
-  return await umbler("/v1/chats/" + encodeURIComponent(chatId) + "/tags/", {
-    method:"POST",
-    body: JSON.stringify({
-      tagId: TAG_ID,
-      organizationId: ORG_ID
-    })
-  });
+  try {
+    return await umbler("/v1/chats/" + encodeURIComponent(chatId) + "/tags/", {
+      method:"POST",
+      body: JSON.stringify({
+        tagId: TAG_ID,
+        organizationId: ORG_ID
+      })
+    });
+  } catch (e) {
+    const alreadyTagged =
+      e.status === 400 &&
+      e.data &&
+      e.data.errors &&
+      Array.isArray(e.data.errors.TagId) &&
+      e.data.errors.TagId.some(msg =>
+        String(msg).toLowerCase().includes("já contém essa tag")
+      );
+
+    if (alreadyTagged) {
+      console.log("tag_already_present", chatId);
+      return { alreadyPresent: true };
+    }
+
+    throw e;
+  }
 }
 
 async function addContactNote(contactId, content) {
-  return await umbler(
-    "/v1/contacts/" + encodeURIComponent(contactId) +
-    "/notes/?organizationId=" + encodeURIComponent(ORG_ID),
-    {
-      method:"POST",
-      body: JSON.stringify({
-        content: content
-      })
-    }
-  );
+  return await umbler("/v1/contacts/" + encodeURIComponent(contactId) + "/notes/", {
+    method:"POST",
+    body: JSON.stringify({
+      content,
+      organizationId: ORG_ID
+    })
+  });
 }
 
 const server = http.createServer(async (req, res) => {
