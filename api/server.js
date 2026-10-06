@@ -262,4 +262,46 @@ const server = http.createServer(async (req, res) => {
   });
 });
 
-server.listen(PORT, () => console.log("matreiro-leads listening on", PORT));
+async function validateIntegration() {
+  if (!TOKEN || !ORG_ID || !CHANNEL_ID || !TAG_ID) {
+    console.error("umbler_integration_config_missing");
+    return;
+  }
+
+  try {
+    const me = await umbler("/v1/members/me/");
+    const orgs = Array.isArray(me && me.organizations) ? me.organizations : [];
+    const org = orgs.find(o => o && o.id === ORG_ID);
+
+    if (!org || org.active !== true) {
+      throw new Error("organization_not_active");
+    }
+
+    const channel = await umbler(
+      "/v1/channels/" + encodeURIComponent(CHANNEL_ID) +
+      "/?organizationId=" + encodeURIComponent(ORG_ID)
+    );
+
+    const tag = await umbler(
+      "/v1/tags/" + encodeURIComponent(TAG_ID) +
+      "/?organizationId=" + encodeURIComponent(ORG_ID)
+    );
+
+    if (!channel || channel.id !== CHANNEL_ID) {
+      throw new Error("channel_not_found");
+    }
+
+    if (!tag || tag.id !== TAG_ID) {
+      throw new Error("tag_not_found");
+    }
+
+    console.log("umbler_integration_ok");
+  } catch (e) {
+    console.error("umbler_integration_check_failed", e.status || "", e.message || "unknown");
+  }
+}
+
+server.listen(PORT, () => {
+  console.log("matreiro-leads listening on", PORT);
+  validateIntegration();
+});
