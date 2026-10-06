@@ -65,26 +65,61 @@ function sourceName(src, medium, ref, gclid, fbclid) {
   return "Direto / Orgânico";
 }
 
-async function umbler(path, options={}) {
-  const r = await fetch(UMBLER_BASE + path, {
-    ...options,
-    headers: {
-      "Authorization": "Bearer " + TOKEN,
-      "Accept": "application/json",
-      ...(options.body ? {"Content-Type":"application/json"} : {}),
-      ...(options.headers || {})
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function umbler(path, options={}, attempt=0) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 18000);
+
+  try {
+    const r = await fetch(UMBLER_BASE + path, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        "Authorization": "Bearer " + TOKEN,
+        "Accept": "application/json",
+        ...(options.body ? {"Content-Type":"application/json"} : {}),
+        ...(options.headers || {})
+      }
+    });
+
+    clearTimeout(timer);
+
+    const text = await r.text();
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch { data = {raw:text}; }
+
+    if (!r.ok) {
+      if (attempt < 1 && (r.status === 429 || r.status >= 500)) {
+        await sleep(700);
+        return umbler(path, options, attempt + 1);
+      }
+
+      const e = new Error("Umbler " + r.status);
+      e.status = r.status;
+      e.data = data;
+      throw e;
     }
-  });
-  const text = await r.text();
-  let data = null;
-  try { data = text ? JSON.parse(text) : null; } catch { data = {raw:text}; }
-  if (!r.ok) {
-    const e = new Error("Umbler " + r.status);
-    e.status = r.status;
-    e.data = data;
+
+    return data;
+  } catch (e) {
+    clearTimeout(timer);
+
+    if (
+      attempt < 1 &&
+      (
+        e.name === "AbortError" ||
+        e.name === "TypeError"
+      )
+    ) {
+      await sleep(700);
+      return umbler(path, options, attempt + 1);
+    }
+
     throw e;
   }
-  return data;
 }
 
 async function getOrCreateContact(name, phone) {
@@ -173,23 +208,78 @@ async function addContactNote(contactId, content) {
 }
 
 async function addPrivateChatMessage(chatId, content) {
+  return await umbler("/v1/messages/", {
+    method:"POST",
+    body: JSON.stringify({
+      organizationId: ORG_ID,
+      chatId,
+      message: content,
+      isPrivate: true,
+      skipReassign: true,
+      automated: true
+    })
+  });
+}
+
+async function markChatUnread(chatId) {
   try {
-    await umbler("/v1/messages/", {
+    await umbler(
+      "/v1/chats/" + encodeURIComponent(chatId) +
+      "/unread/?organizationId=" + encodeURIComponent(ORG_ID),
+      { method:"PUT" }
+    );
+    console.log("chat_marked_unread", chatId);
+  } catch (e) {
+    console.error("unread_warning", e.status || "", e.data || e.message);
+  }
+}
+
+async function attachContactTag(contactId) {
+  try {
+    await umbler("/v1/contacts/" + encodeURIComponent(contactId) + "/tags/", {
       method:"POST",
       body: JSON.stringify({
-        organizationId: ORG_ID,
-        chatId,
-        message: content,
-        isPrivate: true,
-        skipReassign: true,
-        automated: true
+        tagId: TAG_ID,
+        organizationId: ORG_ID
       })
     });
-    console.log("private_message_added", chatId);
+    console.log("contact_tag_added", contactId);
   } catch (e) {
-    // A nota do contato continua sendo a fonte de verdade.
-    // Falha aqui não deve perder o lead.
+    const alreadyTagged =
+      e.status === 400 &&
+      JSON.stringify(e.data || {}).toLowerCase().includes("já contém");
+
+    if (alreadyTagged) {
+      console.log("contact_tag_already_present", contactId);
+      return;
+    }
+
+    console.error("contact_tag_warning", e.status || "", e.data || e.message);
+  }
+}
+
+async function saveLeadDetails(contactId, chatId, content) {
+  let saved = false;
+
+  try {
+    await addPrivateChatMessage(chatId, content);
+    saved = true;
+    console.log("private_message_added", chatId);
+    await markChatUnread(chatId);
+  } catch (e) {
     console.error("private_message_warning", e.status || "", e.data || e.message);
+  }
+
+  try {
+    await addContactNote(contactId, content);
+    saved = true;
+    console.log("contact_note_added", contactId);
+  } catch (e) {
+    console.error("contact_note_warning", e.status || "", e.data || e.message);
+  }
+
+  if (!saved) {
+    throw new Error("lead_details_not_saved");
   }
 }
 
@@ -240,9 +330,6 @@ const server = http.createServer(async (req, res) => {
     try {
       const b = JSON.parse(raw || "{}");
 
-      // Honeypot: bots tend to fill hidden fields.
-      if (clean(b.website, 100)) return send(res, 200, {ok:true}, origin);
-
       const nome = clean(b.nome, 100);
       const phone = normalizePhone(b.whatsapp);
       const cidade = clean(b.cidade, 100);
@@ -259,6 +346,7 @@ const server = http.createServer(async (req, res) => {
       const utmMedium = clean(b.utm_medium, 120);
       const utmCampaign = clean(b.utm_campaign, 180);
       const utmContent = clean(b.utm_content, 180);
+      const utmTerm = clean(b.utm_term, 180);
       const gclid = clean(b.gclid, 250);
       const fbclid = clean(b.fbclid, 250);
       const referrer = clean(b.referrer, 500);
@@ -275,6 +363,7 @@ const server = http.createServer(async (req, res) => {
       if (!chatId) throw new Error("chat_id_missing");
 
       await attachTag(chatId);
+      await attachContactTag(contactId);
 
       const note = [
         "🆕 NOVO LEAD — LANDING MATREIRO",
@@ -299,6 +388,7 @@ const server = http.createServer(async (req, res) => {
         "utm_medium: " + (utmMedium || "-"),
         "Campanha: " + (utmCampaign || "-"),
         "Conteúdo: " + (utmContent || "-"),
+        "Termo: " + (utmTerm || "-"),
         "gclid: " + (gclid ? "presente" : "-"),
         "fbclid: " + (fbclid ? "presente" : "-"),
         "",
@@ -308,10 +398,9 @@ const server = http.createServer(async (req, res) => {
         "Página: " + (pagina || "-")
       ].join("\n");
 
-      await addContactNote(contactId, note);
-      await addPrivateChatMessage(chatId, note);
+      await saveLeadDetails(contactId, chatId, note);
 
-      console.log("lead_saved", chatId, phone);
+      console.log("lead_saved", chatId, "phone_end=" + phone.slice(-4));
 
       return send(res, 200, {ok:true, leadId: chatId}, origin);
     } catch (e) {
