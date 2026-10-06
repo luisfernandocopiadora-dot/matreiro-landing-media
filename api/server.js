@@ -119,9 +119,31 @@ async function createOrGetChat(contactId) {
   });
 }
 
+function chatHasTag(chat) {
+  return !!(
+    chat &&
+    Array.isArray(chat.tags) &&
+    chat.tags.some(tag =>
+      tag &&
+      (
+        tag.id === TAG_ID ||
+        tag.tagId === TAG_ID
+      )
+    )
+  );
+}
+
+async function getChat(chatId) {
+  return await umbler(
+    "/v1/chats/" + encodeURIComponent(chatId) +
+    "/?organizationId=" + encodeURIComponent(ORG_ID) +
+    "&includeMessages=false&includeMetadata=false"
+  );
+}
+
 async function attachTag(chatId) {
   try {
-    return await umbler("/v1/chats/" + encodeURIComponent(chatId) + "/tags/", {
+    await umbler("/v1/chats/" + encodeURIComponent(chatId) + "/tags/", {
       method:"POST",
       body: JSON.stringify({
         tagId: TAG_ID,
@@ -138,13 +160,39 @@ async function attachTag(chatId) {
         String(msg).toLowerCase().includes("já contém essa tag")
       );
 
-    if (alreadyTagged) {
-      console.log("tag_already_present", chatId);
-      return { alreadyPresent: true };
+    if (!alreadyTagged) throw e;
+  }
+
+  let chat = await getChat(chatId);
+
+  if (!chatHasTag(chat)) {
+    console.log("tag_retry_list", chatId);
+
+    try {
+      await umbler("/v1/chats/" + encodeURIComponent(chatId) + "/tags/list/", {
+        method:"POST",
+        body: JSON.stringify({
+          organizationId: ORG_ID,
+          tagIds: [TAG_ID]
+        })
+      });
+    } catch (e) {
+      const alreadyTagged =
+        e.status === 400 &&
+        JSON.stringify(e.data || {}).toLowerCase().includes("já contém");
+
+      if (!alreadyTagged) throw e;
     }
 
-    throw e;
+    chat = await getChat(chatId);
   }
+
+  if (!chatHasTag(chat)) {
+    throw new Error("tag_not_confirmed");
+  }
+
+  console.log("tag_verified", chatId);
+  return chat;
 }
 
 async function addContactNote(contactId, content) {
