@@ -94,7 +94,7 @@ async function getOrCreateContact(name, phone) {
   } catch (e) {
     if (e.status !== 404) throw e;
   }
-  return await umbler("/v1/contacts/", {
+  const saved = await umbler("/v1/contacts/", {
     method:"POST",
     body: JSON.stringify({
       name,
@@ -102,6 +102,10 @@ async function getOrCreateContact(name, phone) {
       organizationId: ORG_ID
     })
   });
+
+  // A criação retorna ContactSaveModel { contact, alreadyExisted }.
+  // A busca por telefone retorna ContactModel diretamente.
+  return saved && saved.contact ? saved.contact : saved;
 }
 
 async function createOrGetChat(contactId) {
@@ -125,14 +129,51 @@ async function attachTag(chatId) {
   });
 }
 
-async function addContactNote(contactId, content) {
-  return await umbler("/v1/contacts/" + encodeURIComponent(contactId) + "/notes/", {
+async function addPrivateLeadMessage(chatId, content) {
+  return await umbler("/v1/messages/", {
     method:"POST",
     body: JSON.stringify({
-      content,
-      organizationId: ORG_ID
+      organizationId: ORG_ID,
+      chatId,
+      message: content,
+      isPrivate: true,
+      skipReassign: true,
+      automated: true
     })
   });
+}
+
+async function unassignAndKeepOpen(chatId) {
+  try {
+    await umbler(
+      "/v1/chats/" + encodeURIComponent(chatId) +
+      "/?organizationId=" + encodeURIComponent(ORG_ID),
+      {
+        method:"PUT",
+        body: JSON.stringify({
+          open: true,
+          memberId: null
+        })
+      }
+    );
+  } catch (e) {
+    console.error("chat_unassign_warning", e.status || "", e.message || "");
+  }
+}
+
+async function markUnread(chatId) {
+  try {
+    await umbler(
+      "/v1/chats/" + encodeURIComponent(chatId) +
+      "/unread/?organizationId=" + encodeURIComponent(ORG_ID),
+      {
+        method:"PUT",
+        body: JSON.stringify({})
+      }
+    );
+  } catch (e) {
+    console.error("chat_unread_warning", e.status || "", e.message || "");
+  }
 }
 
 const server = http.createServer(async (req, res) => {
@@ -218,6 +259,7 @@ const server = http.createServer(async (req, res) => {
       if (!chatId) throw new Error("chat_id_missing");
 
       await attachTag(chatId);
+      await unassignAndKeepOpen(chatId);
 
       const note = [
         "🆕 NOVO LEAD — LANDING MATREIRO",
@@ -252,7 +294,10 @@ const server = http.createServer(async (req, res) => {
         "Página: " + (pagina || "-")
       ].join("\n");
 
-      await addContactNote(contactId, note);
+      await addPrivateLeadMessage(chatId, note);
+      await markUnread(chatId);
+
+      console.log("lead_saved", chatId, phone);
 
       return send(res, 200, {ok:true, leadId: chatId}, origin);
     } catch (e) {
