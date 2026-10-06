@@ -258,13 +258,12 @@ const server = http.createServer(async (req, res) => {
       const nome = clean(b.nome, 100);
       const phone = normalizePhone(b.whatsapp);
       const cidade = clean(b.cidade, 100);
-      const prazo = clean(b.prazo, 100);
       const segmento = clean(b.segmento, 100);
       const quantidade = clean(b.quantidade, 100);
       const manga = clean(b.manga, 100);
       const arte = clean(b.arte, 180);
 
-      if (!nome || !phone || !cidade || !prazo || !segmento || !quantidade || !manga || !arte) {
+      if (!nome || !phone || !cidade || !segmento || !quantidade || !manga || !arte) {
         return send(res, 400, {ok:false, error:"invalid_fields"}, origin);
       }
 
@@ -302,7 +301,6 @@ const server = http.createServer(async (req, res) => {
         "Quantidade: " + quantidade,
         "Manga: " + manga,
         "Arte: " + arte,
-        "Prazo: " + prazo,
         "",
         "📊 QUALIFICAÇÃO",
         classificacao,
@@ -324,7 +322,7 @@ const server = http.createServer(async (req, res) => {
 
       await addContactNote(contactId, note);
 
-      console.log("lead_saved", chatId, phone, prazo);
+      console.log("lead_saved", chatId, phone);
 
       return send(res, 200, {ok:true, leadId: chatId}, origin);
     } catch (e) {
