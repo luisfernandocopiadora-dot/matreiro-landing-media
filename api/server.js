@@ -172,6 +172,27 @@ async function addContactNote(contactId, content) {
   });
 }
 
+async function addPrivateChatMessage(chatId, content) {
+  try {
+    await umbler("/v1/messages/", {
+      method:"POST",
+      body: JSON.stringify({
+        organizationId: ORG_ID,
+        chatId,
+        message: content,
+        isPrivate: true,
+        skipReassign: true,
+        automated: true
+      })
+    });
+    console.log("private_message_added", chatId);
+  } catch (e) {
+    // A nota do contato continua sendo a fonte de verdade.
+    // Falha aqui não deve perder o lead.
+    console.error("private_message_warning", e.status || "", e.data || e.message);
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   const origin = req.headers.origin || "";
 
@@ -288,6 +309,7 @@ const server = http.createServer(async (req, res) => {
       ].join("\n");
 
       await addContactNote(contactId, note);
+      await addPrivateChatMessage(chatId, note);
 
       console.log("lead_saved", chatId, phone);
 
