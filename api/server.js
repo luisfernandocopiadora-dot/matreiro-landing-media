@@ -129,51 +129,17 @@ async function attachTag(chatId) {
   });
 }
 
-async function addPrivateLeadMessage(chatId, content) {
-  return await umbler("/v1/messages/", {
-    method:"POST",
-    body: JSON.stringify({
-      organizationId: ORG_ID,
-      chatId,
-      message: content,
-      isPrivate: true,
-      skipReassign: true,
-      automated: true
-    })
-  });
-}
-
-async function unassignAndKeepOpen(chatId) {
-  try {
-    await umbler(
-      "/v1/chats/" + encodeURIComponent(chatId) +
-      "/?organizationId=" + encodeURIComponent(ORG_ID),
-      {
-        method:"PUT",
-        body: JSON.stringify({
-          open: true,
-          memberId: null
-        })
-      }
-    );
-  } catch (e) {
-    console.error("chat_unassign_warning", e.status || "", e.message || "");
-  }
-}
-
-async function markUnread(chatId) {
-  try {
-    await umbler(
-      "/v1/chats/" + encodeURIComponent(chatId) +
-      "/unread/?organizationId=" + encodeURIComponent(ORG_ID),
-      {
-        method:"PUT",
-        body: JSON.stringify({})
-      }
-    );
-  } catch (e) {
-    console.error("chat_unread_warning", e.status || "", e.message || "");
-  }
+async function addContactNote(contactId, content) {
+  return await umbler(
+    "/v1/contacts/" + encodeURIComponent(contactId) +
+    "/notes/?organizationId=" + encodeURIComponent(ORG_ID),
+    {
+      method:"POST",
+      body: JSON.stringify({
+        content: content
+      })
+    }
+  );
 }
 
 const server = http.createServer(async (req, res) => {
@@ -259,7 +225,6 @@ const server = http.createServer(async (req, res) => {
       if (!chatId) throw new Error("chat_id_missing");
 
       await attachTag(chatId);
-      await unassignAndKeepOpen(chatId);
 
       const note = [
         "🆕 NOVO LEAD — LANDING MATREIRO",
@@ -294,10 +259,9 @@ const server = http.createServer(async (req, res) => {
         "Página: " + (pagina || "-")
       ].join("\n");
 
-      await addPrivateLeadMessage(chatId, note);
-      await markUnread(chatId);
+      await addContactNote(contactId, note);
 
-      console.log("lead_saved", chatId, phone);
+      console.log("lead_saved", chatId, phone, prazo);
 
       return send(res, 200, {ok:true, leadId: chatId}, origin);
     } catch (e) {
