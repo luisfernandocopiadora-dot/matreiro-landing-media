@@ -119,28 +119,6 @@ async function createOrGetChat(contactId) {
   });
 }
 
-function chatHasTag(chat) {
-  return !!(
-    chat &&
-    Array.isArray(chat.tags) &&
-    chat.tags.some(tag =>
-      tag &&
-      (
-        tag.id === TAG_ID ||
-        tag.tagId === TAG_ID
-      )
-    )
-  );
-}
-
-async function getChat(chatId) {
-  return await umbler(
-    "/v1/chats/" + encodeURIComponent(chatId) +
-    "/?organizationId=" + encodeURIComponent(ORG_ID) +
-    "&includeMessages=false&includeMetadata=false"
-  );
-}
-
 async function attachTag(chatId) {
   try {
     await umbler("/v1/chats/" + encodeURIComponent(chatId) + "/tags/", {
@@ -150,6 +128,8 @@ async function attachTag(chatId) {
         organizationId: ORG_ID
       })
     });
+    console.log("tag_added", chatId);
+    return;
   } catch (e) {
     const alreadyTagged =
       e.status === 400 &&
@@ -160,39 +140,26 @@ async function attachTag(chatId) {
         String(msg).toLowerCase().includes("já contém essa tag")
       );
 
-    if (!alreadyTagged) throw e;
-  }
-
-  let chat = await getChat(chatId);
-
-  if (!chatHasTag(chat)) {
-    console.log("tag_retry_list", chatId);
-
-    try {
-      await umbler("/v1/chats/" + encodeURIComponent(chatId) + "/tags/list/", {
-        method:"POST",
-        body: JSON.stringify({
-          organizationId: ORG_ID,
-          tagIds: [TAG_ID]
-        })
-      });
-    } catch (e) {
-      const alreadyTagged =
-        e.status === 400 &&
-        JSON.stringify(e.data || {}).toLowerCase().includes("já contém");
-
-      if (!alreadyTagged) throw e;
+    if (alreadyTagged) {
+      console.log("tag_already_present", chatId);
+      return;
     }
 
-    chat = await getChat(chatId);
+    console.error("tag_primary_warning", e.status || "", e.data || e.message);
   }
 
-  if (!chatHasTag(chat)) {
-    throw new Error("tag_not_confirmed");
+  try {
+    await umbler("/v1/chats/" + encodeURIComponent(chatId) + "/tags/list/", {
+      method:"POST",
+      body: JSON.stringify({
+        organizationId: ORG_ID,
+        tagIds: [TAG_ID]
+      })
+    });
+    console.log("tag_added_list", chatId);
+  } catch (e) {
+    console.error("tag_secondary_warning", e.status || "", e.data || e.message);
   }
-
-  console.log("tag_verified", chatId);
-  return chat;
 }
 
 async function addContactNote(contactId, content) {
@@ -239,7 +206,7 @@ const server = http.createServer(async (req, res) => {
   const ip = String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim();
   const now = Date.now();
   const recent = (rate.get(ip) || []).filter(t => now - t < 10 * 60 * 1000);
-  if (recent.length >= 8) return send(res, 429, {ok:false, error:"too_many_requests"}, origin);
+  if (recent.length >= 30) return send(res, 429, {ok:false, error:"too_many_requests"}, origin);
   recent.push(now); rate.set(ip, recent);
 
   let raw = "";
