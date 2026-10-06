@@ -1,1 +1,3 @@
-# matreiro-landing-media
+# Matreiro Landing Media
+
+Arquivos de mídia públicos usados na landing page da Matreiro.
